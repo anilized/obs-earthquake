@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>EMSC Overlay Settings</title>
+<style>
+  :root{font:13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif}
+  body{margin:12px}
+  .row{display:flex;align-items:center;gap:8px;margin:8px 0;flex-wrap:wrap}
+  label{min-width:110px;font-weight:600}
+  input,select{padding:4px 6px}
+  .hint{opacity:.7;font-size:12px}
+  .group{border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
+  button{padding:6px 10px;border-radius:8px;border:1px solid #ccc;background:#f7f7f7;cursor:pointer}
+  button.primary{background:#111;color:#fff;border-color:#111}
+</style>
+
+<h2>EMSC Overlay — Settings</h2>
+
+<div class="group">
+  <div class="row">
+    <label>Country</label>
+    <select id="country">
+      <option>Turkey</option><option>Greece</option><option>Italy</option>
+      <option>Bulgaria</option><option>Romania</option><option>CustomBBox</option>
+    </select>
+  </div>
+  <div id="bbox" class="row" style="display:none">
+    <label>Custom BBox</label>
+    <div>latMin <input id="latMin" type="number" step="0.1" style="width:80px"></div>
+    <div>latMax <input id="latMax" type="number" step="0.1" style="width:80px"></div>
+    <div>lonMin <input id="lonMin" type="number" step="0.1" style="width:80px"></div>
+    <div>lonMax <input id="lonMax" type="number" step="0.1" style="width:80px"></div>
+  </div>
+  <div class="row">
+    <label>Min Magnitude</label>
+    <input id="minMag" type="number" step="0.1" value="3.0" style="width:90px">
+  </div>
+  <div class="row">
+    <label>Beep on Alert</label>
+    <input id="beep" type="checkbox" checked>
+  </div>
+  <div class="row">
+    <label>Sound URL</label>
+    <input id="soundUrl" type="text" placeholder="file:///…/ding.wav or https://…" style="min-width:320px">
+  </div>
+  <div class="row hint">
+    Tip: Use a short WAV/MP3. Local path must start with <code>file:///</code>.
+  </div>
+</div>
+
+<div class="group">
+  <div class="row">
+    <button id="save" class="primary">Save</button>
+    <button id="test">Test Alert</button>
+  </div>
+  <div class="hint">Open your scene with <b>overlay.html</b> loaded to see test popups.</div>
+</div>
+
+<script>
+const CONFIG_KEY='emscDockConfigV2';
+const chan=new BroadcastChannel('emsc-quake');
+const BOXES={
+  Turkey:{latMin:35,latMax:43,lonMin:25,lonMax:45},
+  Greece:{latMin:34,latMax:42,lonMin:19,lonMax:29},
+  Italy:{latMin:36,latMax:47,lonMin:6,lonMax:19},
+  Bulgaria:{latMin:41,latMax:45,lonMin:22,lonMax:29},
+  Romania:{latMin:43,latMax:49,lonMin:20,lonMax:30}
+};
+
+const country=document.getElementById('country');
+const bboxWrap=document.getElementById('bbox');
+const latMinI=document.getElementById('latMin');
+const latMaxI=document.getElementById('latMax');
+const lonMinI=document.getElementById('lonMin');
+const lonMaxI=document.getElementById('lonMax');
+const minMag=document.getElementById('minMag');
+const beep=document.getElementById('beep');
+const soundUrl=document.getElementById('soundUrl');
+
+function load(){
+  let s={};
+  try{s=JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}');}catch(e){}
+  if(s.country) country.value=s.country;
+  if(s.minMag!=null) minMag.value=s.minMag;
+  if(typeof s.beep==='boolean') beep.checked=s.beep;
+  if(s.soundUrl!=null) soundUrl.value=s.soundUrl;
+  if(country.value==='CustomBBox'){
+    bboxWrap.style.display='';
+    if(s.bbox){ latMinI.value=s.bbox.latMin; latMaxI.value=s.bbox.latMax; lonMinI.value=s.bbox.lonMin; lonMaxI.value=s.bbox.lonMax; }
+  }else{
+    bboxWrap.style.display='none';
+    const b=BOXES[country.value]||BOXES.Turkey;
+    latMinI.value=b.latMin; latMaxI.value=b.latMax; lonMinI.value=b.lonMin; lonMaxI.value=b.lonMax;
+  }
+}
+country.onchange=()=>{
+  if(country.value==='CustomBBox'){ bboxWrap.style.display=''; }
+  else { bboxWrap.style.display='none';
+    const b=BOXES[country.value]||BOXES.Turkey;
+    latMinI.value=b.latMin; latMaxI.value=b.latMax; lonMinI.value=b.lonMin; lonMaxI.value=b.lonMax;
+  }
+};
+
+function save(){
+  const data={
+    country: country.value,
+    minMag: Number(minMag.value)||0,
+    beep: !!beep.checked,
+    soundUrl: soundUrl.value||'',
+    bbox:{
+      latMin:Number(latMinI.value), latMax:Number(latMaxI.value),
+      lonMin:Number(lonMinI.value), lonMax:Number(lonMaxI.value)
+    }
+  };
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(data));
+  chan.postMessage({type:'config:update'});
+}
+document.getElementById('save').onclick=save;
+
+// quick test: sends a simulated quake to overlay via BroadcastChannel
+document.getElementById('test').onclick=()=>{
+  chan.postMessage({type:'test', payload:{
+    mag: 5.8, magtype:'Mw', lat:39.9, lon:32.8, depth:10, flynn_region:'TURKEY'
+  }});
+};
+
+load();
+</script>

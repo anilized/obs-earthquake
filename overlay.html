@@ -1,0 +1,154 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>EMSC Overlay</title>
+<style>
+  html,body{height:100%;margin:0;background:transparent;overflow:hidden}
+  /* Container for stacked alerts (top-right) */
+  #stack{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:12px;pointer-events:none}
+  .card{
+    pointer-events:auto;
+    min-width: 320px; max-width: 520px;
+    color:#fff; background:rgba(10,10,10,.76); border:1px solid rgba(255,255,255,.12);
+    border-radius:14px; padding:14px 16px; box-shadow:0 18px 48px rgba(0,0,0,.45);
+    backdrop-filter: blur(6px); transform: translateY(-10px); opacity:0;
+    animation: drop .35s ease-out forwards;
+  }
+  .title{font:600 16px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; letter-spacing:.2px}
+  .meta{margin-top:6px; font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; opacity:.95}
+  .badge{
+    display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; margin-right:8px;
+    background:#ff4d4f; color:#fff;
+  }
+  .m2{background:#ff7a45}.m3{background:#ffa940}.m4{background:#faad14}.m5{background:#fadb14;color:#111}
+  .m6{background:#52c41a}.m7{background:#13c2c2}.m8{background:#722ed1}
+  .close{position:absolute;top:8px;right:8px;opacity:.7;cursor:pointer; user-select:none}
+  @keyframes drop{to{opacity:1; transform: translateY(0)}}
+  .bar{height:3px; background:linear-gradient(90deg, #fff, transparent); opacity:.45; margin-top:10px}
+  .fadeout{animation: fade 0.6s ease forwards}
+  @keyframes fade{to{opacity:0; transform: translateY(-6px)}}
+</style>
+<div id="stack"></div>
+
+<script>
+/* -------------------- config sharing -------------------- */
+const CONFIG_KEY = 'emscDockConfigV2';
+const chan = new BroadcastChannel('emsc-quake');
+let cfg = {
+  country:'Turkey',
+  bbox:{latMin:35,latMax:43,lonMin:25,lonMax:45},
+  minMag:3.0,
+  beep:true,
+  soundUrl:'', // optional custom sound
+};
+const BOXES = {
+  Turkey:{latMin:35,latMax:43,lonMin:25,lonMax:45},
+  Greece:{latMin:34,latMax:42,lonMin:19,lonMax:29},
+  Italy:{latMin:36,latMax:47,lonMin:6,lonMax:19},
+  Bulgaria:{latMin:41,latMax:45,lonMin:22,lonMax:29},
+  Romania:{latMin:43,latMax:49,lonMin:20,lonMax:30}
+};
+function loadCfg(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}');
+    if(saved.country) cfg.country = saved.country;
+    if(saved.minMag!=null) cfg.minMag = Number(saved.minMag)||0;
+    if(typeof saved.beep==='boolean') cfg.beep = saved.beep;
+    if(saved.soundUrl!=null) cfg.soundUrl = saved.soundUrl;
+    if(saved.country==='CustomBBox' && saved.bbox) cfg.bbox = saved.bbox;
+    else cfg.bbox = BOXES[cfg.country] || BOXES.Turkey;
+  }catch(e){}
+}
+loadCfg();
+window.addEventListener('storage', (e)=>{ if(e.key===CONFIG_KEY){ loadCfg(); }});
+chan.onmessage = (e)=>{
+  if(e.data?.type==='config:update'){ loadCfg(); }
+  if(e.data?.type==='test'){ // settings page "Test" button
+    showAlert(makePropsFromTest(e.data.payload||{}));
+  }
+};
+function makePropsFromTest(p){
+  const now = new Date().toISOString();
+  return {
+    unid: 'TEST-'+Date.now(),
+    mag: p.mag ?? 5.5,
+    magtype: p.magtype ?? 'Mw',
+    lat: p.lat ?? 39.9,
+    lon: p.lon ?? 32.8,
+    depth: p.depth ?? 10,
+    time: now,
+    flynn_region: p.flynn_region ?? 'TURKEY'
+  };
+}
+
+/* -------------------- websocket -------------------- */
+const WS_URL = 'wss://www.seismicportal.eu/standing_order/websocket';
+let ws, retryTimer;
+const seen = new Set();
+function connect(){
+  clearTimeout(retryTimer);
+  try{ ws && ws.close(); }catch{}
+  ws = new WebSocket(WS_URL);
+  ws.onclose = ()=> retryTimer = setTimeout(connect, 2000);
+  ws.onmessage = (ev)=>{
+    try{
+      const msg = JSON.parse(ev.data);
+      const p = msg?.data?.properties || {};
+      if(!p.unid) return;
+      if(seen.has(p.unid)) return;
+      seen.add(p.unid);
+      if(passesFilter(p)) showAlert(p);
+    }catch(e){}
+  };
+}
+function passesFilter(p){
+  const b = cfg.bbox;
+  const m = Number(cfg.minMag)||0;
+  return (p.mag>=m && p.lat>=b.latMin && p.lat<=b.latMax && p.lon>=b.lonMin && p.lon<=b.lonMax);
+}
+
+/* -------------------- audio -------------------- */
+const defaultBeep = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAABAACAgICAgP8AAP//AAAA';
+function playBeep(){
+  if(!cfg.beep) return;
+  const src = cfg.soundUrl && cfg.soundUrl.trim() ? cfg.soundUrl.trim() : defaultBeep;
+  const a = new Audio(src);
+  a.play().catch(()=>{ /* ignored */ });
+}
+
+/* -------------------- UI: alert cards -------------------- */
+const stack = document.getElementById('stack');
+function levelClass(m){
+  if(m>=8) return 'm8'; if(m>=7) return 'm7'; if(m>=6) return 'm6';
+  if(m>=5) return 'm5'; if(m>=4) return 'm4'; if(m>=3) return 'm3'; return 'm2';
+}
+function showAlert(p){
+  playBeep();
+  const el = document.createElement('div');
+  el.className = 'card';
+  const when = new Date(p.time).toLocaleString();
+  const badge = `<span class="badge ${levelClass(p.mag)}">M${Number(p.mag||0).toFixed(1)}</span>`;
+  const title = `${badge} ${p.flynn_region || 'Region'} • ${p.depth ?? '?'} km`;
+  const meta  = `${when} — (${Number(p.lat).toFixed(2)}, ${Number(p.lon).toFixed(2)}) ${p.magtype? '• '+p.magtype:''}`;
+
+  el.innerHTML = `
+    <div class="title">${title}<span class="close" title="dismiss">✕</span></div>
+    <div class="meta">${meta}</div>
+    <div class="bar"></div>
+  `;
+  const closer = el.querySelector('.close');
+  closer.onclick = ()=> dismiss(el);
+
+  stack.prepend(el);
+
+  // auto-dismiss after 10s (longer for bigger quakes)
+  const keep = p.mag>=6 ? 16000 : p.mag>=5 ? 13000 : 10000;
+  setTimeout(()=> dismiss(el), keep);
+}
+function dismiss(el){
+  el.classList.add('fadeout');
+  setTimeout(()=> el.remove(), 580);
+}
+
+/* boot */
+connect();
+</script>
