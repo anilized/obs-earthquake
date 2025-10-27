@@ -3,43 +3,39 @@
 <title>EMSC Overlay</title>
 <style>
   html,body{height:100%;margin:0;background:transparent;overflow:hidden}
-  /* Container for stacked alerts (top-right) */
-  #stack{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:12px;pointer-events:none}
+  /* 400x400 notification stage */
+  #stage{
+    position:fixed; top:0; left:0; width:400px; height:400px;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none; /* click-through on stream */
+  }
   .card{
-    pointer-events:auto;
-    min-width: 320px; max-width: 520px;
-    color:#fff; background:rgba(10,10,10,.76); border:1px solid rgba(255,255,255,.12);
-    border-radius:14px; padding:14px 16px; box-shadow:0 18px 48px rgba(0,0,0,.45);
-    backdrop-filter: blur(6px); transform: translateY(-10px); opacity:0;
+    width:360px; max-width:360px; /* keep inside 400px */
+    color:#fff; background:rgba(10,10,10,.78);
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:16px; padding:14px 16px;
+    backdrop-filter: blur(6px);
+    box-shadow:0 18px 48px rgba(0,0,0,.45);
+    transform: translateY(-8px) scale(.98); opacity:0;
     animation: drop .35s ease-out forwards;
   }
-  .title{font:600 16px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; letter-spacing:.2px}
+  .title{font:600 18px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; letter-spacing:.2px}
   .meta{margin-top:6px; font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; opacity:.95}
-  .badge{
-    display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; margin-right:8px;
-    background:#ff4d4f; color:#fff;
-  }
+  .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-weight:700; margin-right:8px; background:#ff4d4f; color:#fff;}
   .m2{background:#ff7a45}.m3{background:#ffa940}.m4{background:#faad14}.m5{background:#fadb14;color:#111}
   .m6{background:#52c41a}.m7{background:#13c2c2}.m8{background:#722ed1}
-  .close{position:absolute;top:8px;right:8px;opacity:.7;cursor:pointer; user-select:none}
-  @keyframes drop{to{opacity:1; transform: translateY(0)}}
+  .close{position:absolute; top:10px; right:12px; opacity:.75; cursor:pointer; user-select:none; pointer-events:auto}
   .bar{height:3px; background:linear-gradient(90deg, #fff, transparent); opacity:.45; margin-top:10px}
-  .fadeout{animation: fade 0.6s ease forwards}
-  @keyframes fade{to{opacity:0; transform: translateY(-6px)}}
+  @keyframes drop{to{opacity:1; transform: translateY(0) scale(1)}}
+  .fadeout{animation: fade .55s ease forwards}
+  @keyframes fade{to{opacity:0; transform: translateY(-6px) scale(.98)}}
 </style>
-<div id="stack"></div>
+<div id="stage"></div>
 
 <script>
-/* -------------------- config sharing -------------------- */
+/* ===== Config sync ===== */
 const CONFIG_KEY = 'emscDockConfigV2';
 const chan = new BroadcastChannel('emsc-quake');
-let cfg = {
-  country:'Turkey',
-  bbox:{latMin:35,latMax:43,lonMin:25,lonMax:45},
-  minMag:3.0,
-  beep:true,
-  soundUrl:'', // optional custom sound
-};
 const BOXES = {
   Turkey:{latMin:35,latMax:43,lonMin:25,lonMax:45},
   Greece:{latMin:34,latMax:42,lonMin:19,lonMax:29},
@@ -47,77 +43,80 @@ const BOXES = {
   Bulgaria:{latMin:41,latMax:45,lonMin:22,lonMax:29},
   Romania:{latMin:43,latMax:49,lonMin:20,lonMax:30}
 };
+let cfg = {country:'Turkey', bbox:BOXES.Turkey, minMag:3.0, beep:true, soundUrl:''};
+
 function loadCfg(){
   try{
-    const saved = JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}');
-    if(saved.country) cfg.country = saved.country;
-    if(saved.minMag!=null) cfg.minMag = Number(saved.minMag)||0;
-    if(typeof saved.beep==='boolean') cfg.beep = saved.beep;
-    if(saved.soundUrl!=null) cfg.soundUrl = saved.soundUrl;
-    if(saved.country==='CustomBBox' && saved.bbox) cfg.bbox = saved.bbox;
-    else cfg.bbox = BOXES[cfg.country] || BOXES.Turkey;
-  }catch(e){}
+    const s = JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}');
+    cfg.country = s.country ?? cfg.country;
+    cfg.minMag  = (typeof s.minMag==='number') ? s.minMag : Number(s.minMag||cfg.minMag);
+    cfg.beep    = (typeof s.beep==='boolean') ? s.beep : cfg.beep;
+    cfg.soundUrl= s.soundUrl ?? cfg.soundUrl;
+    cfg.bbox    = (s.country==='CustomBBox' && s.bbox) ? s.bbox : (BOXES[cfg.country]||BOXES.Turkey);
+  }catch{}
 }
 loadCfg();
-window.addEventListener('storage', (e)=>{ if(e.key===CONFIG_KEY){ loadCfg(); }});
 chan.onmessage = (e)=>{
   if(e.data?.type==='config:update'){ loadCfg(); }
-  if(e.data?.type==='test'){ // settings page "Test" button
-    showAlert(makePropsFromTest(e.data.payload||{}));
-  }
+  if(e.data?.type==='test'){ showAlert(makeTestProps(e.data.payload||{})); }
 };
-function makePropsFromTest(p){
-  const now = new Date().toISOString();
+function makeTestProps(p){
   return {
     unid: 'TEST-'+Date.now(),
-    mag: p.mag ?? 5.5,
+    mag: Number(p.mag ?? 5.5),
     magtype: p.magtype ?? 'Mw',
-    lat: p.lat ?? 39.9,
-    lon: p.lon ?? 32.8,
-    depth: p.depth ?? 10,
-    time: now,
+    lat: Number(p.lat ?? 39.9),
+    lon: Number(p.lon ?? 32.8),
+    depth: Number(p.depth ?? 10),
+    time: new Date().toISOString(),
     flynn_region: p.flynn_region ?? 'TURKEY'
   };
 }
 
-/* -------------------- websocket -------------------- */
+/* ===== WebSocket ===== */
 const WS_URL = 'wss://www.seismicportal.eu/standing_order/websocket';
-let ws, retryTimer;
-const seen = new Set();
+let ws, retryTimer; const seen = new Set();
 function connect(){
   clearTimeout(retryTimer);
   try{ ws && ws.close(); }catch{}
   ws = new WebSocket(WS_URL);
   ws.onclose = ()=> retryTimer = setTimeout(connect, 2000);
-  ws.onmessage = (ev)=>{
+  ws.onmessage = (e)=>{
     try{
-      const msg = JSON.parse(ev.data);
-      const p = msg?.data?.properties || {};
+      const m = JSON.parse(e.data);
+      const p = m?.data?.properties || {};
       if(!p.unid) return;
       if(seen.has(p.unid)) return;
-      seen.add(p.unid);
-      if(passesFilter(p)) showAlert(p);
-    }catch(e){}
+      if(passesFilter(p)){ seen.add(p.unid); showAlert(p); }
+    }catch{}
   };
 }
 function passesFilter(p){
   const b = cfg.bbox;
-  const m = Number(cfg.minMag)||0;
-  return (p.mag>=m && p.lat>=b.latMin && p.lat<=b.latMax && p.lon>=b.lonMin && p.lon<=b.lonMax);
+  const m = Number(cfg.minMag)||0;       // FIX: ensure numeric compare
+  const mag = Number(p.mag)||0;
+  const lat = Number(p.lat), lon = Number(p.lon);
+  return (mag >= m && lat>=b.latMin && lat<=b.latMax && lon>=b.lonMin && lon<=b.lonMax);
 }
 
-/* -------------------- audio -------------------- */
+/* ===== Sound ===== */
 const defaultBeep = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAABAACAgICAgP8AAP//AAAA';
+function resolveUrlMaybeRelative(u){
+  try { return new URL(u, document.location.href).href; } catch { return u; }
+}
+function getSoundUrl(){
+  const s = (cfg.soundUrl||'').trim();
+  return s ? resolveUrlMaybeRelative(s) : defaultBeep;
+}
 function playBeep(){
   if(!cfg.beep) return;
-  const src = cfg.soundUrl && cfg.soundUrl.trim() ? cfg.soundUrl.trim() : defaultBeep;
-  const a = new Audio(src);
-  a.play().catch(()=>{ /* ignored */ });
+  const a = new Audio(getSoundUrl());
+  a.play().catch(()=>{ /* In normal browsers autoplay may block; OBS allows. */ });
 }
 
-/* -------------------- UI: alert cards -------------------- */
-const stack = document.getElementById('stack');
-function levelClass(m){
+/* ===== UI ===== */
+const stage = document.getElementById('stage');
+function magClass(m){
   if(m>=8) return 'm8'; if(m>=7) return 'm7'; if(m>=6) return 'm6';
   if(m>=5) return 'm5'; if(m>=4) return 'm4'; if(m>=3) return 'm3'; return 'm2';
 }
@@ -126,27 +125,25 @@ function showAlert(p){
   const el = document.createElement('div');
   el.className = 'card';
   const when = new Date(p.time).toLocaleString();
-  const badge = `<span class="badge ${levelClass(p.mag)}">M${Number(p.mag||0).toFixed(1)}</span>`;
+  const mag = Number(p.mag||0);
+  const badge = `<span class="badge ${magClass(mag)}">M${mag.toFixed(1)}</span>`;
   const title = `${badge} ${p.flynn_region || 'Region'} • ${p.depth ?? '?'} km`;
-  const meta  = `${when} — (${Number(p.lat).toFixed(2)}, ${Number(p.lon).toFixed(2)}) ${p.magtype? '• '+p.magtype:''}`;
-
+  const meta  = `${when}<br>(${Number(p.lat).toFixed(2)}, ${Number(p.lon).toFixed(2)}) ${p.magtype? '• '+p.magtype:''}`;
   el.innerHTML = `
     <div class="title">${title}<span class="close" title="dismiss">✕</span></div>
     <div class="meta">${meta}</div>
     <div class="bar"></div>
   `;
-  const closer = el.querySelector('.close');
-  closer.onclick = ()=> dismiss(el);
-
-  stack.prepend(el);
-
-  // auto-dismiss after 10s (longer for bigger quakes)
-  const keep = p.mag>=6 ? 16000 : p.mag>=5 ? 13000 : 10000;
+  el.querySelector('.close').onclick = ()=> dismiss(el);
+  stage.innerHTML = '';            // only one card visible at a time inside 400x400
+  stage.appendChild(el);
+  const keep = mag>=6 ? 16000 : mag>=5 ? 12000 : 9000;
   setTimeout(()=> dismiss(el), keep);
 }
 function dismiss(el){
+  if(!el) return;
   el.classList.add('fadeout');
-  setTimeout(()=> el.remove(), 580);
+  setTimeout(()=>{ if(el.parentNode===stage) stage.removeChild(el); }, 540);
 }
 
 /* boot */

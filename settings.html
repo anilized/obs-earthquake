@@ -32,7 +32,7 @@
   </div>
   <div class="row">
     <label>Min Magnitude</label>
-    <input id="minMag" type="number" step="0.1" value="3.0" style="width:90px">
+    <input id="minMag" type="number" step="0.1" value="3.0" style="width:90px" inputmode="decimal">
   </div>
   <div class="row">
     <label>Beep on Alert</label>
@@ -40,19 +40,20 @@
   </div>
   <div class="row">
     <label>Sound URL</label>
-    <input id="soundUrl" type="text" placeholder="file:///…/ding.wav or https://…" style="min-width:320px">
+    <input id="soundUrl" type="text" placeholder="assets/default_alert.mp3 or https://…" style="min-width:320px">
   </div>
   <div class="row hint">
-    Tip: Use a short WAV/MP3. Local path must start with <code>file:///</code>.
+    If hosted on GitHub Pages, use a relative path like <code>assets/ding.mp3</code> (or <code>./assets/ding.mp3</code>).
   </div>
 </div>
 
 <div class="group">
   <div class="row">
     <button id="save" class="primary">Save</button>
-    <button id="test">Test Alert</button>
+    <button id="testLow">Test (low M)</button>
+    <button id="testHigh">Test (high M)</button>
   </div>
-  <div class="hint">Open your scene with <b>overlay.html</b> loaded to see test popups.</div>
+  <div class="hint">Open your scene with <b>overlay.html</b> to see test popups.</div>
 </div>
 
 <script>
@@ -80,9 +81,10 @@ function load(){
   let s={};
   try{s=JSON.parse(localStorage.getItem(CONFIG_KEY)||'{}');}catch(e){}
   if(s.country) country.value=s.country;
-  if(s.minMag!=null) minMag.value=s.minMag;
+  if(s.minMag!=null) minMag.value=String(s.minMag);          // keep as text but numeric on save
   if(typeof s.beep==='boolean') beep.checked=s.beep;
   if(s.soundUrl!=null) soundUrl.value=s.soundUrl;
+
   if(country.value==='CustomBBox'){
     bboxWrap.style.display='';
     if(s.bbox){ latMinI.value=s.bbox.latMin; latMaxI.value=s.bbox.latMax; lonMinI.value=s.bbox.lonMin; lonMaxI.value=s.bbox.lonMax; }
@@ -94,7 +96,8 @@ function load(){
 }
 country.onchange=()=>{
   if(country.value==='CustomBBox'){ bboxWrap.style.display=''; }
-  else { bboxWrap.style.display='none';
+  else {
+    bboxWrap.style.display='none';
     const b=BOXES[country.value]||BOXES.Turkey;
     latMinI.value=b.latMin; latMaxI.value=b.latMax; lonMinI.value=b.lonMin; lonMaxI.value=b.lonMax;
   }
@@ -103,7 +106,7 @@ country.onchange=()=>{
 function save(){
   const data={
     country: country.value,
-    minMag: Number(minMag.value)||0,
+    minMag: Number(minMag.value||0),      // FIX: store as number
     beep: !!beep.checked,
     soundUrl: soundUrl.value||'',
     bbox:{
@@ -116,11 +119,13 @@ function save(){
 }
 document.getElementById('save').onclick=save;
 
-// quick test: sends a simulated quake to overlay via BroadcastChannel
-document.getElementById('test').onclick=()=>{
-  chan.postMessage({type:'test', payload:{
-    mag: 5.8, magtype:'Mw', lat:39.9, lon:32.8, depth:10, flynn_region:'TURKEY'
-  }});
+document.getElementById('testLow').onclick=()=> {
+  const m = Math.max(0, Number(minMag.value||0) - 0.5); // below threshold → should NOT show
+  chan.postMessage({type:'test', payload:{mag:m, magtype:'Mw', lat:39.9, lon:32.8, depth:10, flynn_region:'TURKEY'}});
+};
+document.getElementById('testHigh').onclick=()=> {
+  const m = Number(minMag.value||0) + 0.5;              // above threshold → should show
+  chan.postMessage({type:'test', payload:{mag:m, magtype:'Mw', lat:39.9, lon:32.8, depth:10, flynn_region:'TURKEY'}});
 };
 
 load();
